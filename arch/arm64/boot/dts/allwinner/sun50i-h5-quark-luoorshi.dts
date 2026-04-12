@@ -14,9 +14,8 @@
 	compatible = "Lois,Quark-N-h5", "allwinner,sun50i-h5";
 
 	aliases {
-		ethernet0 = &emac;
-		ethernet1 = &rtl8189ftv;
 		serial0 = &uart0;
+		spi0 = &spi0;
 	};
 
 	chosen {
@@ -54,15 +53,6 @@
 };
 
 &ehci1 {
-	status = "okay";
-};
-
-&emac {
-	pinctrl-names = "default";
-	pinctrl-0 = <&emac_rgmii_pins>;
-	phy-supply = <&reg_gmac_3v3>;
-	phy-handle = <&ext_rgmii_phy>;
-	phy-mode = "rgmii-id";
 	status = "okay";
 };
 

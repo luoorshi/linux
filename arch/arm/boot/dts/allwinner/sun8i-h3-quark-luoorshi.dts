@@ -47,20 +47,12 @@
 	compatible = "Lois,Quark-N-h3", "allwinner,sun8i-h3";
 
 	aliases {
-		ethernet0 = &emac;
 		serial0 = &uart0;
 		spi0 = &spi0;
 	};
 };
 
 &ehci0 {
-	status = "okay";
-};
-
-&emac {
-	phy-handle = <&int_mii_phy>;
-	phy-mode = "mii";
-	allwinner,leds-active-low;
 	status = "okay";
 };
 
