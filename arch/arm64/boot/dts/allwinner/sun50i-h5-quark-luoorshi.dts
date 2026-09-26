@@ -16,10 +16,26 @@
 	aliases {
 		serial0 = &uart0;
 		spi0 = &spi0;
+		mmc0 = &mmc0;
 	};
 
 	chosen {
 		stdout-path = "serial0:115200n8";
+		/*
+		 * 240x135 小屏：只画 1 个企鹅，并居中。
+		 * 若 /boot.scr 覆盖了 bootargs，请在脚本里同样加上：
+		 *   fbcon=logo-count:1 fbcon=logo-pos:center
+		 * （或合并写：fbcon=logo-count:1,logo-pos:center —— 取决于脚本拼接方式；
+		 *  推荐两个 fbcon= 参数或一个里用空格分隔的 options，见下。）
+		 */
+		bootargs = "console=ttyS0,115200 root=/dev/mmcblk0p2 rootwait panic=10 fbcon=logo-count:1,logo-pos:center";
+	};
+
+	reg_vcc3v3: vcc3v3 {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc3v3";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
 	};
 
 	leds {
@@ -88,6 +104,15 @@
 	status = "okay";
 };
 
+/* SD card — missing previously caused: Waiting for root device /dev/mmcblk0p2 */
+&mmc0 {
+	vmmc-supply = <&reg_vcc3v3>;
+	disable-wp;
+	bus-width = <4>;
+	cd-gpios = <&pio 5 6 GPIO_ACTIVE_LOW>; /* PF6 */
+	status = "okay";
+};
+
 /* add for Lois */
 &spi0 {
 	status = "okay";
@@ -95,21 +120,30 @@
 	bootph-all;
 	pinctrl-names = "default";
 	pinctrl-0 = <&spi0_pins>;
+	#address-cells = <1>;
+	#size-cells = <0>;
 
+	/*
+	 * IPS 1.14" 240x135 ST7789VW — same as linux_card:
+	 * fb_st7789vw, MADCTL 0x70, offset 40/53, no BGR
+	 */
 	display@0 {
-		compatible = "sitronix,st7789v";
+		compatible = "sitronix,st7789vw", "sitronix,st7789v";
 		reg = <0>;
+		status = "okay";
 		spi-max-frequency = <32000000>;
-		/* PA1=UART2_RX (reset), PA0=UART2_TX (dc); avoid PA4/PA5 (UART0 console) */
+		buswidth = <8>;
+		rotate = <0>;
+		fps = <33>;
 		reset-gpios = <&pio 0 1 GPIO_ACTIVE_LOW>;
 		dc-gpios = <&pio 0 0 GPIO_ACTIVE_HIGH>;
-		/* Display offset: X direction 0x34, Y direction 0x28 */
-		col-offset = <0x35>;
-		row-offset = <0x28>;
-		/* BGR color order */
-		rotation = <270>;
-		bgr = <1>;
-		/* bgr = <0>; */
+		debug = <0>;
+
+		/* U-Boot-only */
+		col-offset = <53>;
+		row-offset = <40>;
+		rotation = <90>;
+
 		u-boot,dm-pre-reloc;
 		bootph-all;
 	};

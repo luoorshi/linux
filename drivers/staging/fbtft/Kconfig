@@ -152,6 +152,14 @@ config FB_TFT_ST7789V
 
 	  Say Y if you have such a display that utilizes this controller.
 
+config FB_TFT_ST7789VW
+	tristate "FB driver for the ST7789VW LCD Controller (240x135 IPS)"
+	help
+	  Framebuffer support for Sitronix ST7789VW panels used on linux_card /
+	  Quark-N (IPS 1.14" 240x135). Ported from the 4.14 linux_card tree.
+
+	  Say Y for Quark-N H3/H5 SPI LCD.
+
 config FB_TFT_TINYLCD
 	tristate "FB driver for tinylcd.com display"
 	help
