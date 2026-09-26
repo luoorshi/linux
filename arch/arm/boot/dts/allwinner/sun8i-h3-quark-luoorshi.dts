@@ -120,3 +120,15 @@
 		bootph-all;
 	};
 };
+
+/* MPU6050 on TWI0: PA11=SCL, PA12=SDA. AD0 low -> address 0x68. */
+&i2c0 {
+	status = "okay";
+
+	mpu6050@68 {
+		compatible = "invensense,mpu6050";
+		reg = <0x68>;
+		vdd-supply = <&reg_vcc3v3>;
+		vddio-supply = <&reg_vcc3v3>;
+	};
+};
