@@ -15,8 +15,18 @@
 
 	aliases {
 		serial0 = &uart0;
+		serial1 = &uart1;
+        serial2 = &uart2;
+        serial3 = &uart3;
 		spi0 = &spi0;
+		spi1 = &spi1;
+		i2c0 = &i2c0;
+		i2c1 = &i2c1;
+        i2c2 = &i2c2;
 		mmc0 = &mmc0;
+        mmc2 = &mmc2;
+		i2s0 = &i2s0;
+		pcm5102a = &pcm5102a;
 	};
 
 	chosen {
@@ -62,6 +72,27 @@
 		enable-active-high;
 		gpio = <&pio 3 6 GPIO_ACTIVE_HIGH>; /* PD6 */
 	};
+	pcm5102a: pcm5102a-codec {
+        #sound-dai-cells = <0>;
+        compatible = "ti,pcm5102a";
+        status = "disabled";
+    };
+
+    sound_i2s {
+        compatible = "simple-audio-card";
+        simple-audio-card,name = "I2S-master";
+        simple-audio-card,mclk-fs = <256>;
+        simple-audio-card,format = "i2s";
+        status = "disabled";
+
+        simple-audio-card,cpu {
+            sound-dai = <&i2s0>;
+        };
+
+        simple-audio-card,codec {
+            sound-dai = <&pcm5102a>;
+        };
+    };
 };
 
 &ehci0 {
@@ -106,10 +137,31 @@
 
 /* SD card — missing previously caused: Waiting for root device /dev/mmcblk0p2 */
 &mmc0 {
+    pinctrl-names = "default";
+    linux,phandle = <0x20>;
+    pinctrl-0 = <&mmc0_pins>;
+    cd-gpios = <&pio 5 6 GPIO_ACTIVE_LOW>; /* PF6 */
+    vmmc-supply = <&reg_vcc3v3>;
+    bus-width = <4>;
+    boot_device = <0>;
+    removable = <1>;
+    // cd-inverted;
+    cap-sd-highspeed;
+    mmc-driver-type = <0>;
+    status = "okay";
+};
+
+&mmc2 {
+    linux,phandle = <0x10>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&mmc2_8bit_pins>;
 	vmmc-supply = <&reg_vcc3v3>;
-	disable-wp;
-	bus-width = <4>;
-	cd-gpios = <&pio 5 6 GPIO_ACTIVE_LOW>; /* PF6 */
+    clock-frequency = <52000000>;
+	bus-width = <8>;
+    mmc-driver-type = <1>;
+	non-removable;
+	cap-mmc-hw-reset;
+	boot_device = <0>;
 	status = "okay";
 };
 
@@ -152,7 +204,9 @@
 /* MPU6050 on TWI0: PA11=SCL, PA12=SDA. AD0 low -> address 0x68. */
 &i2c0 {
 	status = "okay";
-
+    #size-cells = <0>;
+    #address-cells = <1>;
+	clock-frequency = <100000>;
 	mpu6050@68 {
 		compatible = "invensense,mpu6050";
 		reg = <0x68>;
@@ -160,3 +214,24 @@
 		vddio-supply = <&reg_vcc3v3>;
 	};
 };
+
+&i2s0 {
+    sound-dai = <&pcm5102a>;
+    status = "disabled";
+};
+
+
+&codec {
+    compatible = "allwinner,sun8i-h3-codec";
+    #sound-dai-cells = <0>;
+    allwinner,audio-routing =
+        "Line Out", "LINEOUT",
+        "MIC1", "Mic",
+        "Mic",  "MBIAS";
+    status = "okay";
+};
+
+&codec_analog {
+    status = "okay";
+};
+
