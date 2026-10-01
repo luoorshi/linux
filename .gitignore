@@ -188,3 +188,7 @@ sphinx_*/
 
 # bc language scripts (not LLVM bitcode)
 !kernel/time/timeconst.bc
+
+# RTL8723BU WiFi firmware shipped with rtl8xxxu
+!drivers/net/wireless/realtek/rtl8xxxu/firmware/rtl8723bu_nic.bin
+!drivers/net/wireless/realtek/rtl8xxxu/firmware/rtl8723b_fw.bin
