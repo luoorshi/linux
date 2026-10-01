@@ -97,13 +97,24 @@
 	status = "okay";
 };
 
+/* USB Host，和 H5 / quark-n 参考板一样打开 usb1，供 RTL8723BU 等 USB 设备枚举 */
+&ehci1 {
+	status = "okay";
+};
+
+&ohci1 {
+	status = "okay";
+};
+
 &usb_otg {
 	status = "okay";
 	dr_mode = "peripheral";
 };
 
 &usbphy {
+	/* Type-A 口 VBUS 常开，和 H5 板一致 */
 	usb0_id_det-gpios = <&pio 6 12 GPIO_ACTIVE_HIGH>; /* PG12 */
+	status = "okay";
 };
 
 /* add for Lois */
