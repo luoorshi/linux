@@ -100,6 +100,8 @@ enum {
 #define ATIHDMI_NUM_CAPTURE	0
 #define ATIHDMI_NUM_PLAYBACK	8
 
+/* Hygon HD Audio controller */
+#define PCI_DEVICE_ID_HYGON_18H_M05H_HDA	0x14a9
 
 static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX;
 static char *id[SNDRV_CARDS] = SNDRV_DEFAULT_STR;
@@ -241,6 +243,7 @@ enum {
 	AZX_DRIVER_ZHAOXIN,
 	AZX_DRIVER_ZHAOXINHDMI,
 	AZX_DRIVER_LOONGSON,
+	AZX_DRIVER_HYGON,
 	AZX_DRIVER_GENERIC,
 	AZX_NUM_DRIVERS, /* keep this as last entry */
 };
@@ -360,6 +363,7 @@ static const char * const driver_short_names[] = {
 	[AZX_DRIVER_ZHAOXIN] = "HDA Zhaoxin",
 	[AZX_DRIVER_ZHAOXINHDMI] = "HDA Zhaoxin HDMI",
 	[AZX_DRIVER_LOONGSON] = "HDA Loongson",
+	[AZX_DRIVER_HYGON] = "HDA Hygon",
 	[AZX_DRIVER_GENERIC] = "HD-Audio Generic",
 };
 
@@ -615,17 +619,17 @@ static int azx_position_ok(struct azx *chip, struct azx_dev *azx_dev);
 /* called from IRQ */
 static int azx_position_check(struct azx *chip, struct azx_dev *azx_dev)
 {
-	struct hda_intel *hda = container_of(chip, struct hda_intel, chip);
+	struct hda_intel_stream *istream = azx_dev_to_istream(azx_dev);
 	int ok;
 
 	ok = azx_position_ok(chip, azx_dev);
 	if (ok == 1) {
-		azx_dev->irq_pending = 0;
+		istream->irq_pending = false;
 		return ok;
 	} else if (ok == 0) {
 		/* bogus IRQ, process it later */
-		azx_dev->irq_pending = 1;
-		schedule_work(&hda->irq_pending_work);
+		istream->irq_pending = true;
+		schedule_work(&istream->irq_pending_work);
 	}
 	return 0;
 }
@@ -721,11 +725,13 @@ static int azx_position_ok(struct azx *chip, struct azx_dev *azx_dev)
  */
 static void azx_irq_pending_work(struct work_struct *work)
 {
-	struct hda_intel *hda = container_of(work, struct hda_intel, irq_pending_work);
+	struct hda_intel_stream *istream =
+		container_of(work, struct hda_intel_stream, irq_pending_work);
+	struct azx_dev *azx_dev = &istream->azx_dev;
+	struct hda_intel *hda = istream->hda;
 	struct azx *chip = &hda->chip;
 	struct hdac_bus *bus = azx_bus(chip);
-	struct hdac_stream *s;
-	int pending, ok;
+	int ok;
 
 	if (!hda->irq_pending_warned) {
 		dev_info(chip->card->dev,
@@ -735,42 +741,51 @@ static void azx_irq_pending_work(struct work_struct *work)
 	}
 
 	for (;;) {
-		pending = 0;
-		spin_lock_irq(&bus->reg_lock);
-		list_for_each_entry(s, &bus->stream_list, list) {
-			struct azx_dev *azx_dev = stream_to_azx_dev(s);
-			if (!azx_dev->irq_pending ||
-			    !s->substream ||
-			    !s->running)
-				continue;
+		scoped_guard(spinlock_irq, &bus->reg_lock) {
+			if (!istream->irq_pending ||
+			    !azx_dev->core.substream ||
+			    !azx_dev->core.running) {
+				return;
+			}
+
 			ok = azx_position_ok(chip, azx_dev);
-			if (ok > 0) {
-				azx_dev->irq_pending = 0;
-				spin_unlock(&bus->reg_lock);
-				snd_pcm_period_elapsed(s->substream);
-				spin_lock(&bus->reg_lock);
-			} else if (ok < 0) {
-				pending = 0;	/* too early */
-			} else
-				pending++;
+			if (ok < 0)
+				return; /* too early */
+			if (ok > 0)
+				istream->irq_pending = false;
 		}
-		spin_unlock_irq(&bus->reg_lock);
-		if (!pending)
+
+		if (ok) {
+			snd_pcm_period_elapsed(azx_dev->core.substream);
 			return;
+		}
+
 		msleep(1);
 	}
 }
 
 /* clear irq_pending flags and assure no on-going workq */
+static void hda_intel_stream_clear_irq_pending(struct azx_dev *azx_dev)
+{
+	struct hda_intel_stream *istream = azx_dev_to_istream(azx_dev);
+
+	istream->irq_pending = false;
+	cancel_work_sync(&istream->irq_pending_work);
+}
+
+/* called at PCM close */
+static void hda_intel_pcm_close(struct azx *chip, struct azx_dev *azx_dev)
+{
+	hda_intel_stream_clear_irq_pending(azx_dev);
+}
+
 static void azx_clear_irq_pending(struct azx *chip)
 {
 	struct hdac_bus *bus = azx_bus(chip);
 	struct hdac_stream *s;
 
-	guard(spinlock_irq)(&bus->reg_lock);
 	list_for_each_entry(s, &bus->stream_list, list) {
-		struct azx_dev *azx_dev = stream_to_azx_dev(s);
-		azx_dev->irq_pending = 0;
+		hda_intel_stream_clear_irq_pending(stream_to_azx_dev(s));
 	}
 }
 
@@ -1797,7 +1812,6 @@ static int azx_create(struct snd_card *card, struct pci_dev *pci,
 	if (jackpoll_ms[dev] >= 50 && jackpoll_ms[dev] <= 60000)
 		chip->jackpoll_interval = msecs_to_jiffies(jackpoll_ms[dev]);
 	INIT_LIST_HEAD(&chip->pcm_list);
-	INIT_WORK(&hda->irq_pending_work, azx_irq_pending_work);
 	INIT_LIST_HEAD(&hda->list);
 	init_vga_switcheroo(chip);
 	init_completion(&hda->probe_wait);
@@ -1846,6 +1860,39 @@ static int azx_create(struct snd_card *card, struct pci_dev *pci,
 	return 0;
 }
 
+/* create and assign streams */
+static int hda_init_streams(struct azx *chip)
+{
+	int i;
+	int stream_tags[2] = { 0, 0 };
+
+	for (i = 0; i < chip->num_streams; i++) {
+		struct hda_intel_stream *s = kzalloc_obj(*s);
+		int tag, dir;
+
+		if (!s)
+			return -ENOMEM;
+
+		s->hda = container_of(chip, struct hda_intel, chip);
+		INIT_WORK(&s->irq_pending_work, azx_irq_pending_work);
+
+		/* stream tag must be unique throughout
+		 * the stream direction group,
+		 * valid values 1...15
+		 * use separate stream tag if the flag
+		 * AZX_DCAPS_SEPARATE_STREAM_TAG is used
+		 */
+		dir = azx_stream_direction(chip, i);
+		if (chip->driver_caps & AZX_DCAPS_SEPARATE_STREAM_TAG)
+			tag = ++stream_tags[dir];
+		else
+			tag = i + 1;
+		azx_add_stream(chip, &s->azx_dev, i, tag);
+	}
+
+	return 0;
+}
+
 static int azx_first_init(struct azx *chip)
 {
 	int dev = chip->dev_index;
@@ -1882,6 +1929,10 @@ static int azx_first_init(struct azx *chip)
 
 	if (chip->driver_type == AZX_DRIVER_ZHAOXINHDMI)
 		bus->polling_mode = 1;
+
+	if (chip->driver_type == AZX_DRIVER_HYGON &&
+	    chip->pci->device == PCI_DEVICE_ID_HYGON_18H_M05H_HDA)
+		bus->access_sdnctl_in_dword = 1;
 
 	bus->remap_addr = pcim_iomap_region(pci, 0, "ICH HD audio");
 	if (IS_ERR(bus->remap_addr))
@@ -2000,7 +2051,7 @@ static int azx_first_init(struct azx *chip)
 	}
 
 	/* initialize streams */
-	err = azx_init_streams(chip);
+	err = hda_init_streams(chip);
 	if (err < 0)
 		return err;
 
@@ -2099,6 +2150,7 @@ static const struct dmi_system_id driver_denylist_dmi[] = {
 static const struct hda_controller_ops pci_hda_ops = {
 	.disable_msi_reset_irq = disable_msi_reset_irq,
 	.position_check = azx_position_check,
+	.pcm_close = hda_intel_pcm_close,
 };
 
 static DECLARE_BITMAP(probed_devs, SNDRV_CARDS);
@@ -2143,6 +2195,15 @@ static int azx_probe(struct pci_dev *pci,
 		}
 	} else {
 		dev_warn(&pci->dev, "dmic_detect option is deprecated, pass snd-intel-dspcfg.dsp_driver=1 option instead\n");
+	}
+
+	/* A sanity check against wild device binding;
+	 * here the range 0x200 is enough for the registers used at probe,
+	 * but it doesn't mean covering all HD-audio registers
+	 */
+	if (pci_resource_len(pci, 0) < 0x200) {
+		dev_err(&pci->dev, "Too small PCI BAR0\n");
+		return -EINVAL;
 	}
 
 	err = snd_card_new(&pci->dev, index[dev], id[dev], THIS_MODULE,
@@ -2262,6 +2323,8 @@ static const struct snd_pci_quirk power_save_denylist[] = {
 	SND_PCI_QUIRK(0x1028, 0x0962, "Dell ALC3271", 0),
 	/* https://bugzilla.kernel.org/show_bug.cgi?id=220210 */
 	SND_PCI_QUIRK(0x17aa, 0x5079, "Lenovo Thinkpad E15", 0),
+	/* https://bugzilla.kernel.org/show_bug.cgi?id=220694 */
+	SND_PCI_QUIRK(0x103c, 0x8a6b, "HP 89E9", 0),
 	{}
 };
 
@@ -2335,7 +2398,7 @@ static int azx_probe_continue(struct azx *chip)
 
 #ifdef CONFIG_SND_HDA_PATCH_LOADER
 	if (patch[dev] && *patch[dev]) {
-		const struct firmware *fw = NULL;
+		const struct firmware *fw __free(firmware) = NULL;
 
 		dev_info(&pci->dev, "Applying patch firmware '%s'\n",
 			 patch[dev]);
@@ -2344,7 +2407,6 @@ static int azx_probe_continue(struct azx *chip)
 				"Cannot load firmware, continue without patching\n");
 		} else {
 			err = snd_hda_load_patch(&chip->bus, fw->size, fw->data);
-			release_firmware(fw);
 			if (err < 0)
 				goto out_free;
 		}
@@ -2792,6 +2854,11 @@ static const struct pci_device_id azx_ids[] = {
 	  .driver_data = AZX_DRIVER_LOONGSON | AZX_DCAPS_NO_TCSEL },
 	{ PCI_VDEVICE(LOONGSON, PCI_DEVICE_ID_LOONGSON_HDMI),
 	  .driver_data = AZX_DRIVER_LOONGSON | AZX_DCAPS_NO_TCSEL },
+	/* Hygon HDAudio */
+	{ PCI_VDEVICE(HYGON, PCI_DEVICE_ID_HYGON_18H_M05H_HDA),
+	  .driver_data = AZX_DRIVER_HYGON | AZX_DCAPS_POSFIX_LPIB | AZX_DCAPS_NO_MSI },
+	/* Lisuan HD-audio */
+	{ PCI_DEVICE(0x4c54, 0x5010), .driver_data = AZX_DRIVER_GENERIC },
 	{ 0, }
 };
 MODULE_DEVICE_TABLE(pci, azx_ids);

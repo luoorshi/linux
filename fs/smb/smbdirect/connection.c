@@ -287,7 +287,7 @@ int smbdirect_connection_create_qp(struct smbdirect_socket *sc)
 	    qp_cap.max_send_wr > sc->ib.dev->attrs.max_qp_wr) {
 		pr_err("Possible CQE overrun: max_send_wr %d\n",
 		       qp_cap.max_send_wr);
-		pr_err("device %.*s reporting max_cqe %d max_qp_wr %d\n",
+		pr_err("device %.*s reporting max_cqe %u max_qp_wr %u\n",
 		       IB_DEVICE_NAME_MAX,
 		       sc->ib.dev->name,
 		       sc->ib.dev->attrs.max_cqe,
@@ -302,7 +302,7 @@ int smbdirect_connection_create_qp(struct smbdirect_socket *sc)
 	     max_send_wr >= sc->ib.dev->attrs.max_qp_wr)) {
 		pr_err("Possible CQE overrun: rdma_send_wr %d + max_send_wr %d = %d\n",
 		       rdma_send_wr, qp_cap.max_send_wr, max_send_wr);
-		pr_err("device %.*s reporting max_cqe %d max_qp_wr %d\n",
+		pr_err("device %.*s reporting max_cqe %u max_qp_wr %u\n",
 		       IB_DEVICE_NAME_MAX,
 		       sc->ib.dev->name,
 		       sc->ib.dev->attrs.max_cqe,
@@ -316,7 +316,7 @@ int smbdirect_connection_create_qp(struct smbdirect_socket *sc)
 	    qp_cap.max_recv_wr > sc->ib.dev->attrs.max_qp_wr) {
 		pr_err("Possible CQE overrun: max_recv_wr %d\n",
 		       qp_cap.max_recv_wr);
-		pr_err("device %.*s reporting max_cqe %d max_qp_wr %d\n",
+		pr_err("device %.*s reporting max_cqe %u max_qp_wr %u\n",
 		       IB_DEVICE_NAME_MAX,
 		       sc->ib.dev->name,
 		       sc->ib.dev->attrs.max_cqe,
@@ -328,7 +328,7 @@ int smbdirect_connection_create_qp(struct smbdirect_socket *sc)
 
 	if (qp_cap.max_send_sge > sc->ib.dev->attrs.max_send_sge ||
 	    qp_cap.max_recv_sge > sc->ib.dev->attrs.max_recv_sge) {
-		pr_err("device %.*s max_send_sge/max_recv_sge = %d/%d too small\n",
+		pr_err("device %.*s max_send_sge/max_recv_sge = %u/%u too small\n",
 		       IB_DEVICE_NAME_MAX,
 		       sc->ib.dev->name,
 		       sc->ib.dev->attrs.max_send_sge,
@@ -403,12 +403,21 @@ void smbdirect_connection_destroy_qp(struct smbdirect_socket *sc)
 		sc->ib.qp = NULL;
 		rdma_destroy_qp(sc->rdma.cm_id);
 	}
+	/*
+	 * These CQs were created with ib_alloc_cq_any(), which arms an internal
+	 * completion handler (ib_cq_poll_work for IB_POLL_WORKQUEUE). They MUST be
+	 * torn down with ib_free_cq(), which cancel_work_sync()es that poll work
+	 * before freeing the CQ. ib_destroy_cq() skips that step, so a completion
+	 * posted late by the (software) provider — e.g. rxe posting an RNR error
+	 * from rxe_receiver after rdma_destroy_qp() — re-queues ib_cq_poll_work on
+	 * an already-freed CQ (KASAN slab-use-after-free in ib_cq_poll_work).
+	 */
 	if (sc->ib.recv_cq) {
-		ib_destroy_cq(sc->ib.recv_cq);
+		ib_free_cq(sc->ib.recv_cq);
 		sc->ib.recv_cq = NULL;
 	}
 	if (sc->ib.send_cq) {
-		ib_destroy_cq(sc->ib.send_cq);
+		ib_free_cq(sc->ib.send_cq);
 		sc->ib.send_cq = NULL;
 	}
 	if (sc->ib.pd) {
@@ -706,7 +715,7 @@ bool smbdirect_connection_is_connected(struct smbdirect_socket *sc)
 		return false;
 	return true;
 }
-__SMBDIRECT_EXPORT_SYMBOL__(smbdirect_connection_is_connected);
+EXPORT_SYMBOL_GPL(smbdirect_connection_is_connected);
 
 int smbdirect_connection_wait_for_connected(struct smbdirect_socket *sc)
 {
@@ -779,7 +788,7 @@ int smbdirect_connection_wait_for_connected(struct smbdirect_socket *sc)
 
 	return 0;
 }
-__SMBDIRECT_EXPORT_SYMBOL__(smbdirect_connection_wait_for_connected);
+EXPORT_SYMBOL_GPL(smbdirect_connection_wait_for_connected);
 
 void smbdirect_connection_idle_timer_work(struct work_struct *work)
 {
@@ -958,7 +967,7 @@ release_credit:
 
 	return ret;
 }
-__SMBDIRECT_EXPORT_SYMBOL__(smbdirect_connection_send_batch_flush);
+EXPORT_SYMBOL_GPL(smbdirect_connection_send_batch_flush);
 
 struct smbdirect_send_batch *
 smbdirect_init_send_batch_storage(struct smbdirect_send_batch_storage *storage,
@@ -976,7 +985,7 @@ smbdirect_init_send_batch_storage(struct smbdirect_send_batch_storage *storage,
 
 	return batch;
 }
-__SMBDIRECT_EXPORT_SYMBOL__(smbdirect_init_send_batch_storage);
+EXPORT_SYMBOL_GPL(smbdirect_init_send_batch_storage);
 
 static int smbdirect_connection_wait_for_send_bcredit(struct smbdirect_socket *sc,
 						      struct smbdirect_send_batch *batch)
@@ -1263,7 +1272,7 @@ lcredit_failed:
 bcredit_failed:
 	return ret;
 }
-__SMBDIRECT_EXPORT_SYMBOL__(smbdirect_connection_send_single_iter);
+EXPORT_SYMBOL_GPL(smbdirect_connection_send_single_iter);
 
 int smbdirect_connection_send_wait_zero_pending(struct smbdirect_socket *sc)
 {
@@ -1288,7 +1297,7 @@ int smbdirect_connection_send_wait_zero_pending(struct smbdirect_socket *sc)
 
 	return 0;
 }
-__SMBDIRECT_EXPORT_SYMBOL__(smbdirect_connection_send_wait_zero_pending);
+EXPORT_SYMBOL_GPL(smbdirect_connection_send_wait_zero_pending);
 
 int smbdirect_connection_send_iter(struct smbdirect_socket *sc,
 				   struct iov_iter *iter,
@@ -1373,7 +1382,7 @@ int smbdirect_connection_send_iter(struct smbdirect_socket *sc,
 
 	return total_count;
 }
-__SMBDIRECT_EXPORT_SYMBOL__(smbdirect_connection_send_iter);
+EXPORT_SYMBOL_GPL(smbdirect_connection_send_iter);
 
 static void smbdirect_connection_send_io_done(struct ib_cq *cq, struct ib_wc *wc)
 {
@@ -1937,7 +1946,7 @@ read_rfc1002_done:
 
 	goto again;
 }
-__SMBDIRECT_EXPORT_SYMBOL__(smbdirect_connection_recvmsg);
+EXPORT_SYMBOL_GPL(smbdirect_connection_recvmsg);
 
 static bool smbdirect_map_sges_single_page(struct smbdirect_map_sges *state,
 					   struct page *page, size_t off, size_t len)
@@ -2168,7 +2177,7 @@ static ssize_t smbdirect_map_sges_from_iter(struct iov_iter *iter, size_t len,
 
 	if (ret < 0) {
 		while (state->num_sge > before) {
-			struct ib_sge *sge = &state->sge[state->num_sge--];
+			struct ib_sge *sge = &state->sge[--state->num_sge];
 
 			ib_dma_unmap_page(state->device,
 					  sge->addr,

@@ -169,7 +169,9 @@ smb2_find_smb_sess_tcon_unlocked(struct cifs_ses *ses, __u32  tid)
 	list_for_each_entry(tcon, &ses->tcon_list, tcon_list) {
 		if (tcon->tid != tid)
 			continue;
+		spin_lock(&tcon->tc_lock);
 		++tcon->tc_count;
+		spin_unlock(&tcon->tc_lock);
 		trace_smb3_tcon_ref(tcon->debug_id, tcon->tc_count,
 				    netfs_trace_tcon_ref_get_find_sess_tcon);
 		return tcon;
@@ -247,11 +249,14 @@ smb2_calc_signature(struct smb_rqst *rqst, struct TCP_Server_Info *server)
 	if (!rc)
 		memcpy(shdr->Signature, smb2_signature, SMB2_SIGNATURE_SIZE);
 
+	memzero_explicit(key, sizeof(key));
+	memzero_explicit(&hmac_ctx, sizeof(hmac_ctx));
 	return rc;
 }
 
 static void generate_key(struct cifs_ses *ses, struct kvec label,
-			 struct kvec context, __u8 *key, unsigned int key_size)
+			 struct kvec context, __u8 *key, unsigned int key_size,
+			 unsigned int full_key_size)
 {
 	unsigned char zero = 0x0;
 	__u8 i[4] = {0, 0, 0, 1};
@@ -265,7 +270,7 @@ static void generate_key(struct cifs_ses *ses, struct kvec label,
 	memset(key, 0x0, key_size);
 
 	hmac_sha256_init_usingrawkey(&hmac_ctx, ses->auth_key.response,
-				     SMB2_NTLMV2_SESSKEY_SIZE);
+				     full_key_size);
 	hmac_sha256_update(&hmac_ctx, i, 4);
 	hmac_sha256_update(&hmac_ctx, label.iov_base, label.iov_len);
 	hmac_sha256_update(&hmac_ctx, &zero, 1);
@@ -280,6 +285,7 @@ static void generate_key(struct cifs_ses *ses, struct kvec label,
 	hmac_sha256_final(&hmac_ctx, prfhash);
 
 	memcpy(key, prfhash, key_size);
+	memzero_explicit(prfhash, sizeof(prfhash));
 }
 
 struct derivation {
@@ -298,6 +304,7 @@ generate_smb3signingkey(struct cifs_ses *ses,
 			struct TCP_Server_Info *server,
 			const struct derivation_triplet *ptriplet)
 {
+	unsigned int full_key_size = SMB2_NTLMV2_SESSKEY_SIZE;
 	bool is_binding = false;
 	int chan_index = 0;
 
@@ -330,12 +337,24 @@ generate_smb3signingkey(struct cifs_ses *ses,
 	if (is_binding) {
 		generate_key(ses, ptriplet->signing.label,
 			     ptriplet->signing.context,
-			     ses->chans[chan_index].signkey,
-			     SMB3_SIGN_KEY_SIZE);
+			     ses->chans[chan_index].signkey, SMB3_SIGN_KEY_SIZE,
+			     SMB2_NTLMV2_SESSKEY_SIZE);
 	} else {
 		generate_key(ses, ptriplet->signing.label,
-			     ptriplet->signing.context,
-			     ses->smb3signingkey, SMB3_SIGN_KEY_SIZE);
+			     ptriplet->signing.context, ses->smb3signingkey,
+			     SMB3_SIGN_KEY_SIZE, SMB2_NTLMV2_SESSKEY_SIZE);
+
+		/*
+		 * Per MS-SMB2 3.2.5.3.1, signing key always uses Session.SessionKey
+		 * (first 16 bytes). Encryption/decryption keys use
+		 * Session.FullSessionKey when dialect is 3.1.1 and cipher is
+		 * AES-256-CCM or AES-256-GCM, otherwise Session.SessionKey.
+		 */
+
+		if (server->dialect == SMB311_PROT_ID &&
+		    (server->cipher_type == SMB2_ENCRYPTION_AES256_CCM ||
+		     server->cipher_type == SMB2_ENCRYPTION_AES256_GCM))
+			full_key_size = ses->auth_key.len;
 
 		/* safe to access primary channel, since it will never go away */
 		spin_lock(&ses->chan_lock);
@@ -345,10 +364,13 @@ generate_smb3signingkey(struct cifs_ses *ses,
 
 		generate_key(ses, ptriplet->encryption.label,
 			     ptriplet->encryption.context,
-			     ses->smb3encryptionkey, SMB3_ENC_DEC_KEY_SIZE);
+			     ses->smb3encryptionkey, SMB3_ENC_DEC_KEY_SIZE,
+			     full_key_size);
+
 		generate_key(ses, ptriplet->decryption.label,
 			     ptriplet->decryption.context,
-			     ses->smb3decryptionkey, SMB3_ENC_DEC_KEY_SIZE);
+			     ses->smb3decryptionkey, SMB3_ENC_DEC_KEY_SIZE,
+			     full_key_size);
 	}
 
 #ifdef CONFIG_CIFS_DEBUG_DUMP_KEYS
@@ -361,7 +383,7 @@ generate_smb3signingkey(struct cifs_ses *ses,
 			&ses->Suid);
 	cifs_dbg(VFS, "Cipher type   %d\n", server->cipher_type);
 	cifs_dbg(VFS, "Session Key   %*ph\n",
-		 SMB2_NTLMV2_SESSKEY_SIZE, ses->auth_key.response);
+		 (int)ses->auth_key.len, ses->auth_key.response);
 	cifs_dbg(VFS, "Signing Key   %*ph\n",
 		 SMB3_SIGN_KEY_SIZE, ses->smb3signingkey);
 	if ((server->cipher_type == SMB2_ENCRYPTION_AES256_CCM) ||
@@ -445,8 +467,8 @@ smb3_calc_signature(struct smb_rqst *rqst, struct TCP_Server_Info *server)
 	unsigned char smb3_signature[SMB2_CMACAES_SIZE];
 	struct kvec *iov = rqst->rq_iov;
 	struct smb2_hdr *shdr = (struct smb2_hdr *)iov[0].iov_base;
-	struct aes_cmac_key cmac_key;
-	struct aes_cmac_ctx cmac_ctx;
+	struct aes_cmac_key cmac_key __cleanup(aes_cmac_zeroize_key);
+	struct aes_cmac_ctx cmac_ctx __cleanup(aes_cmac_zeroize_ctx);
 	struct smb_rqst drqst;
 	u8 key[SMB3_SIGN_KEY_SIZE];
 
@@ -463,6 +485,7 @@ smb3_calc_signature(struct smb_rqst *rqst, struct TCP_Server_Info *server)
 	memset(shdr->Signature, 0x0, SMB2_SIGNATURE_SIZE);
 
 	rc = aes_cmac_preparekey(&cmac_key, key, SMB2_CMACAES_SIZE);
+	memzero_explicit(key, sizeof(key));
 	if (rc) {
 		cifs_server_dbg(VFS, "%s: Could not set key for cmac aes\n", __func__);
 		return rc;

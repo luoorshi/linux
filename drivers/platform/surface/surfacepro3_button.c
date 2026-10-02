@@ -20,7 +20,6 @@
 #define SURFACE_PRO3_BUTTON_HID		"MSHW0028"
 #define SURFACE_PRO4_BUTTON_HID		"MSHW0040"
 #define SURFACE_BUTTON_OBJ_NAME		"VGBI"
-#define SURFACE_BUTTON_DEVICE_NAME	"Surface Pro 3/4 Buttons"
 
 #define MSHW0040_DSM_REVISION		0x01
 #define MSHW0040_DSM_GET_OMPR		0x02	// get OEM Platform Revision
@@ -185,11 +184,14 @@ static bool surface_button_check_MSHW0040(struct device *dev, acpi_handle handle
 
 static int surface_button_probe(struct platform_device *pdev)
 {
-	struct acpi_device *device = ACPI_COMPANION(&pdev->dev);
 	struct surface_button *button;
+	struct acpi_device *device;
 	struct input_dev *input;
-	const char *hid = acpi_device_hid(device);
 	int error;
+
+	device = ACPI_COMPANION(&pdev->dev);
+	if (!device)
+		return -ENODEV;
 
 	if (strncmp(acpi_device_bid(device), SURFACE_BUTTON_OBJ_NAME,
 	    strlen(SURFACE_BUTTON_OBJ_NAME)))
@@ -209,10 +211,10 @@ static int surface_button_probe(struct platform_device *pdev)
 		goto err_free_button;
 	}
 
-	strscpy(acpi_device_name(device), SURFACE_BUTTON_DEVICE_NAME);
-	snprintf(button->phys, sizeof(button->phys), "%s/buttons", hid);
+	snprintf(button->phys, sizeof(button->phys), "%s/buttons",
+		 acpi_device_hid(device));
 
-	input->name = acpi_device_name(device);
+	input->name = "Surface Pro 3/4 Buttons";
 	input->phys = button->phys;
 	input->id.bustype = BUS_HOST;
 	input->dev.parent = &pdev->dev;
@@ -235,8 +237,8 @@ static int surface_button_probe(struct platform_device *pdev)
 		goto err_free_button;
 	}
 
-	dev_info(&pdev->dev, "%s [%s]\n", acpi_device_name(device),
-		 acpi_device_bid(device));
+	dev_info(&pdev->dev, "%s [%s]\n", input->name, acpi_device_bid(device));
+
 	return 0;
 
  err_free_input:

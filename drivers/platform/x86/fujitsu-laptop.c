@@ -56,7 +56,6 @@
 
 #define FUJITSU_LCD_N_LEVELS		8
 
-#define ACPI_FUJITSU_CLASS		"fujitsu"
 #define ACPI_FUJITSU_BL_HID		"FUJ02B1"
 #define ACPI_FUJITSU_BL_DRIVER_NAME	"Fujitsu laptop FUJ02B1 ACPI brightness driver"
 #define ACPI_FUJITSU_BL_DEVICE_NAME	"Fujitsu FUJ02B1"
@@ -466,7 +465,7 @@ static int acpi_fujitsu_bl_input_setup(struct device *dev)
 	snprintf(priv->phys, sizeof(priv->phys), "%s/video/input0",
 		 acpi_device_hid(device));
 
-	priv->input->name = acpi_device_name(device);
+	priv->input->name = ACPI_FUJITSU_BL_DEVICE_NAME;
 	priv->input->phys = priv->phys;
 	priv->input->id.bustype = BUS_HOST;
 	priv->input->id.product = 0x06;
@@ -530,9 +529,13 @@ static void acpi_fujitsu_bl_notify(acpi_handle handle, u32 event, void *data)
 
 static int acpi_fujitsu_bl_probe(struct platform_device *pdev)
 {
-	struct acpi_device *device = ACPI_COMPANION(&pdev->dev);
+	struct acpi_device *device;
 	struct fujitsu_bl *priv;
 	int ret;
+
+	device = ACPI_COMPANION(&pdev->dev);
+	if (!device)
+		return -ENODEV;
 
 	if (acpi_video_get_backlight_type() != acpi_backlight_vendor)
 		return -ENODEV;
@@ -542,13 +545,11 @@ static int acpi_fujitsu_bl_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	fujitsu_bl = priv;
-	strscpy(acpi_device_name(device), ACPI_FUJITSU_BL_DEVICE_NAME);
-	strscpy(acpi_device_class(device), ACPI_FUJITSU_CLASS);
 
 	platform_set_drvdata(pdev, priv);
 
-	pr_info("ACPI: %s [%s]\n",
-		acpi_device_name(device), acpi_device_bid(device));
+	pr_info("ACPI: %s [%s]\n", ACPI_FUJITSU_BL_DEVICE_NAME,
+		acpi_device_bid(device));
 
 	if (get_max_brightness(&pdev->dev) <= 0)
 		priv->max_brightness = FUJITSU_LCD_N_LEVELS;
@@ -677,7 +678,7 @@ static int acpi_fujitsu_laptop_input_setup(struct device *dev)
 	snprintf(priv->phys, sizeof(priv->phys), "%s/input0",
 		 acpi_device_hid(device));
 
-	priv->input->name = acpi_device_name(device);
+	priv->input->name = ACPI_FUJITSU_LAPTOP_DEVICE_NAME;
 	priv->input->phys = priv->phys;
 	priv->input->id.bustype = BUS_HOST;
 
@@ -993,9 +994,13 @@ static void acpi_fujitsu_laptop_notify(acpi_handle handle, u32 event, void *data
 
 static int acpi_fujitsu_laptop_probe(struct platform_device *pdev)
 {
-	struct acpi_device *device = ACPI_COMPANION(&pdev->dev);
 	struct fujitsu_laptop *priv;
+	struct acpi_device *device;
 	int ret, i = 0;
+
+	device = ACPI_COMPANION(&pdev->dev);
+	if (!device)
+		return -ENODEV;
 
 	priv = devm_kzalloc(&pdev->dev, sizeof(*priv), GFP_KERNEL);
 	if (!priv)
@@ -1003,9 +1008,6 @@ static int acpi_fujitsu_laptop_probe(struct platform_device *pdev)
 
 	WARN_ONCE(fext, "More than one FUJ02E3 ACPI device was found.  Driver may not work as intended.");
 	fext = &pdev->dev;
-
-	strscpy(acpi_device_name(device), ACPI_FUJITSU_LAPTOP_DEVICE_NAME);
-	strscpy(acpi_device_class(device), ACPI_FUJITSU_CLASS);
 
 	platform_set_drvdata(pdev, priv);
 
@@ -1016,8 +1018,8 @@ static int acpi_fujitsu_laptop_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
-	pr_info("ACPI: %s [%s]\n",
-		acpi_device_name(device), acpi_device_bid(device));
+	pr_info("ACPI: %s [%s]\n", ACPI_FUJITSU_LAPTOP_DEVICE_NAME,
+		acpi_device_bid(device));
 
 	while (call_fext_func(fext, FUNC_BUTTONS, 0x1, 0x0, 0x0) != 0 &&
 	       i++ < MAX_HOTKEY_RINGBUFFER_SIZE)

@@ -60,7 +60,7 @@ int smbdirect_connect(struct smbdirect_socket *sc, const struct sockaddr *dst)
 	 */
 	return 0;
 }
-__SMBDIRECT_EXPORT_SYMBOL__(smbdirect_connect);
+EXPORT_SYMBOL_GPL(smbdirect_connect);
 
 static int smbdirect_connect_setup_connection(struct smbdirect_socket *sc)
 {
@@ -182,8 +182,9 @@ static int smbdirect_connect_rdma_connect(struct smbdirect_socket *sc)
 	if (sc->ib.dev->attrs.kernel_cap_flags & IBK_SG_GAPS_REG)
 		sc->mr_io.type = IB_MR_TYPE_SG_GAPS;
 
-	sp->responder_resources = min_t(u8, sp->responder_resources,
-					sc->ib.dev->attrs.max_qp_rd_atom);
+	sp->responder_resources = min3(sp->responder_resources,
+				       sc->ib.dev->attrs.max_qp_rd_atom,
+				       U8_MAX);
 	smbdirect_log_rdma_mr(sc, SMBDIRECT_LOG_INFO,
 		"responder_resources=%d\n",
 		sp->responder_resources);
@@ -922,4 +923,4 @@ int smbdirect_connect_sync(struct smbdirect_socket *sc,
 
 	return 0;
 }
-__SMBDIRECT_EXPORT_SYMBOL__(smbdirect_connect_sync);
+EXPORT_SYMBOL_GPL(smbdirect_connect_sync);
