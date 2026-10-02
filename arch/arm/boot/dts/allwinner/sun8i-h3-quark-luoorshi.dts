@@ -41,6 +41,7 @@
  */
 
 #include "sun8i-h3-nanopi.dtsi"
+#include <dt-bindings/thermal/thermal.h>
 
 / {
 	model = "Quark-N Lois H3";
@@ -87,6 +88,21 @@
             sound-dai = <&pcm5102a>;
         };
     };
+
+	/*
+	 * CPU 电压固定 1.1V（PL8 只有一档）。
+	 * H3 公共 OPP 里 1008MHz 标称 1.2V，这里按 quark-n 策略改成 1.1V。
+	 */
+	reg_vdd_cpux: vdd_cpux {
+		compatible = "regulator-gpio";
+		regulator-name = "vdd_cpux";
+		regulator-min-microvolt = <1100000>;
+		regulator-max-microvolt = <1100000>;
+		gpios = <&r_pio 0 8 GPIO_ACTIVE_HIGH>; /* PL8 */
+		states = <1100000 0x1>;
+		regulator-always-on;
+		regulator-boot-on;
+	};
 };
 
 &ehci0 {
@@ -232,5 +248,113 @@
 
 &codec_analog {
     status = "okay";
+};
+
+/*
+ * H3 只使用 sun8i-h3.dtsi 里的三档：648 / 816 / 1008 MHz。
+ * 电压改成固定 1.1V，和 reg_vdd_cpux 一致。
+ * cooling state 0 是最高频率：
+ *   0:1008  1:816  2:648 MHz
+ */
+&cpu0_opp_table {
+	opp-648000000 {
+		opp-microvolt = <1100000>;
+	};
+
+	opp-816000000 {
+		opp-microvolt = <1100000>;
+	};
+
+	opp-1008000000 {
+		opp-microvolt = <1100000>;
+	};
+};
+
+&cpu0 {
+	cpu-supply = <&reg_vdd_cpux>;
+};
+
+&cpu1 {
+	cpu-supply = <&reg_vdd_cpux>;
+};
+
+&cpu2 {
+	cpu-supply = <&reg_vdd_cpux>;
+};
+
+&cpu3 {
+	cpu-supply = <&reg_vdd_cpux>;
+};
+
+&cpu_thermal {
+	polling-delay = <1000>;
+	polling-delay-passive = <200>;
+	/* H3 ths 的 #thermal-sensor-cells = <0>，这里不能带 sensor id */
+	thermal-sensors = <&ths>;
+
+	/* 去掉公共 dtsi 的 80°C passive / 100°C critical，只保留这套降频策略 */
+	/delete-node/ trips;
+	/delete-node/ cooling-maps;
+
+	trips {
+		cpu_warm: cpu_warm {
+			temperature = <55000>;
+			hysteresis = <5000>;
+			type = "passive";
+		};
+		cpu_hot: cpu_hot {
+			temperature = <62000>;
+			hysteresis = <5000>;
+			type = "passive";
+		};
+		cpu_very_hot: cpu_very_hot {
+			temperature = <70000>;
+			hysteresis = <5000>;
+			type = "passive";
+		};
+		cpu_extreme: cpu_extreme {
+			temperature = <76000>;
+			hysteresis = <5000>;
+			type = "passive";
+		};
+		cpu_crit: cpu_crit {
+			temperature = <80000>;
+			hysteresis = <0>;
+			type = "critical";
+		};
+	};
+
+	cooling-maps {
+		/* state >= 1：最高 816MHz */
+		cpu_warm_limit_cpu {
+			trip = <&cpu_warm>;
+			cooling-device = <&cpu0 1 THERMAL_NO_LIMIT>,
+					 <&cpu1 1 THERMAL_NO_LIMIT>,
+					 <&cpu2 1 THERMAL_NO_LIMIT>,
+					 <&cpu3 1 THERMAL_NO_LIMIT>;
+		};
+		/* state >= 2：锁在 648MHz。H3 最低档就是 648MHz */
+		cpu_hot_limit_cpu {
+			trip = <&cpu_hot>;
+			cooling-device = <&cpu0 2 THERMAL_NO_LIMIT>,
+					 <&cpu1 2 THERMAL_NO_LIMIT>,
+					 <&cpu2 2 THERMAL_NO_LIMIT>,
+					 <&cpu3 2 THERMAL_NO_LIMIT>;
+		};
+		cpu_very_hot_limit_cpu {
+			trip = <&cpu_very_hot>;
+			cooling-device = <&cpu0 2 THERMAL_NO_LIMIT>,
+					 <&cpu1 2 THERMAL_NO_LIMIT>,
+					 <&cpu2 2 THERMAL_NO_LIMIT>,
+					 <&cpu3 2 THERMAL_NO_LIMIT>;
+		};
+		cpu_extreme_limit_cpu {
+			trip = <&cpu_extreme>;
+			cooling-device = <&cpu0 2 THERMAL_NO_LIMIT>,
+					 <&cpu1 2 THERMAL_NO_LIMIT>,
+					 <&cpu2 2 THERMAL_NO_LIMIT>,
+					 <&cpu3 2 THERMAL_NO_LIMIT>;
+		};
+	};
 };
 

@@ -4,10 +4,12 @@
 
 /dts-v1/;
 #include "sun50i-h5.dtsi"
+#include "sun50i-h5-cpu-opp.dtsi"
 
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/input/input.h>
 #include <dt-bindings/pinctrl/sun4i-a10.h>
+#include <dt-bindings/thermal/thermal.h>
 
 / {
 	model = "Quark-N Lois H5";
@@ -93,6 +95,21 @@
             sound-dai = <&pcm5102a>;
         };
     };
+
+	/*
+	 * CPU 电压固定 1.1V（PL8 只有一档）。
+	 * 高于 1008MHz 的 OPP 需要 1.24V 以上，在 opp 表里关掉。
+	 */
+	reg_vdd_cpux: vdd_cpux {
+		compatible = "regulator-gpio";
+		regulator-name = "vdd_cpux";
+		regulator-min-microvolt = <1100000>;
+		regulator-max-microvolt = <1100000>;
+		gpios = <&r_pio 0 8 GPIO_ACTIVE_HIGH>; /* PL8 */
+		states = <1100000 0x1>;
+		regulator-always-on;
+		regulator-boot-on;
+	};
 };
 
 &ehci0 {
@@ -233,5 +250,174 @@
 
 &codec_analog {
     status = "okay";
+};
+
+/*
+ * 覆盖 sun50i-h5-cpu-opp.dtsi。
+ * 使能的 6 档全部锁在 1.1V，和固定电压调节器一致。
+ * cpufreq cooling state 0 是最高频率，数字越大频率越低：
+ *   0:1008  1:960  2:912  3:816  4:648  5:408 MHz
+ * 1056/1104/1152MHz 需要更高电压，保持 disabled。
+ */
+&cpu_opp_table {
+	compatible = "operating-points-v2";
+	opp-shared;
+
+	opp-408000000 {
+		opp-hz = /bits/ 64 <408000000>;
+		opp-microvolt = <1100000>;
+		clock-latency-ns = <244144>; /* 8 32k periods */
+	};
+
+	opp-648000000 {
+		opp-hz = /bits/ 64 <648000000>;
+		opp-microvolt = <1100000>;
+		clock-latency-ns = <244144>; /* 8 32k periods */
+	};
+
+	opp-816000000 {
+		opp-hz = /bits/ 64 <816000000>;
+		opp-microvolt = <1100000>;
+		clock-latency-ns = <244144>; /* 8 32k periods */
+	};
+
+	opp-912000000 {
+		opp-hz = /bits/ 64 <912000000>;
+		opp-microvolt = <1100000>;
+		clock-latency-ns = <244144>; /* 8 32k periods */
+	};
+
+	opp-960000000 {
+		opp-hz = /bits/ 64 <960000000>;
+		opp-microvolt = <1100000>;
+		clock-latency-ns = <244144>; /* 8 32k periods */
+	};
+
+	opp-1008000000 {
+		opp-hz = /bits/ 64 <1008000000>;
+		opp-microvolt = <1100000>;
+		clock-latency-ns = <244144>; /* 8 32k periods */
+	};
+
+	opp-1056000000 {
+		status = "disabled";
+		opp-hz = /bits/ 64 <1056000000>;
+		opp-microvolt = <1240000 1240000 1310000>;
+		clock-latency-ns = <244144>; /* 8 32k periods */
+	};
+
+	opp-1104000000 {
+		status = "disabled";
+		opp-hz = /bits/ 64 <1104000000>;
+		opp-microvolt = <1260000 1260000 1310000>;
+		clock-latency-ns = <244144>; /* 8 32k periods */
+	};
+
+	opp-1152000000 {
+		status = "disabled";
+		opp-hz = /bits/ 64 <1152000000>;
+		opp-microvolt = <1300000 1300000 1310000>;
+		clock-latency-ns = <244144>; /* 8 32k periods */
+	};
+};
+
+&cpu0 {
+	clock-names = "cpu";
+	clocks = <&ccu CLK_CPUX>;
+	cpu-supply = <&reg_vdd_cpux>;
+	operating-points-v2 = <&cpu_opp_table>;
+};
+
+&cpu1 {
+	clock-names = "cpu";
+	clocks = <&ccu CLK_CPUX>;
+	cpu-supply = <&reg_vdd_cpux>;
+	operating-points-v2 = <&cpu_opp_table>;
+};
+
+&cpu2 {
+	clock-names = "cpu";
+	clocks = <&ccu CLK_CPUX>;
+	cpu-supply = <&reg_vdd_cpux>;
+	operating-points-v2 = <&cpu_opp_table>;
+};
+
+&cpu3 {
+	clock-names = "cpu";
+	clocks = <&ccu CLK_CPUX>;
+	cpu-supply = <&reg_vdd_cpux>;
+	operating-points-v2 = <&cpu_opp_table>;
+};
+
+&cpu_thermal {
+	polling-delay = <1000>;
+	polling-delay-passive = <200>;
+	thermal-sensors = <&ths 0>;
+
+	/* 去掉公共 dtsi 的 80°C passive / 100°C critical，只保留这套降频策略 */
+	/delete-node/ trips;
+	/delete-node/ cooling-maps;
+
+	trips {
+		cpu_warm: cpu_warm {
+			temperature = <55000>;
+			hysteresis = <5000>;
+			type = "passive";
+		};
+		cpu_hot: cpu_hot {
+			temperature = <62000>;
+			hysteresis = <5000>;
+			type = "passive";
+		};
+		cpu_very_hot: cpu_very_hot {
+			temperature = <70000>;
+			hysteresis = <5000>;
+			type = "passive";
+		};
+		cpu_extreme: cpu_extreme {
+			temperature = <76000>;
+			hysteresis = <5000>;
+			type = "passive";
+		};
+		cpu_crit: cpu_crit {
+			temperature = <80000>;
+			hysteresis = <0>;
+			type = "critical";
+		};
+	};
+
+	cooling-maps {
+		/* state >= 3：最高 816MHz */
+		cpu_warm_limit_cpu {
+			trip = <&cpu_warm>;
+			cooling-device = <&cpu0 3 THERMAL_NO_LIMIT>,
+					 <&cpu1 3 THERMAL_NO_LIMIT>,
+					 <&cpu2 3 THERMAL_NO_LIMIT>,
+					 <&cpu3 3 THERMAL_NO_LIMIT>;
+		};
+		/* state >= 4：最高 648MHz */
+		cpu_hot_limit_cpu {
+			trip = <&cpu_hot>;
+			cooling-device = <&cpu0 4 THERMAL_NO_LIMIT>,
+					 <&cpu1 4 THERMAL_NO_LIMIT>,
+					 <&cpu2 4 THERMAL_NO_LIMIT>,
+					 <&cpu3 4 THERMAL_NO_LIMIT>;
+		};
+		/* state >= 5：锁在 408MHz */
+		cpu_very_hot_limit_cpu {
+			trip = <&cpu_very_hot>;
+			cooling-device = <&cpu0 5 THERMAL_NO_LIMIT>,
+					 <&cpu1 5 THERMAL_NO_LIMIT>,
+					 <&cpu2 5 THERMAL_NO_LIMIT>,
+					 <&cpu3 5 THERMAL_NO_LIMIT>;
+		};
+		cpu_extreme_limit_cpu {
+			trip = <&cpu_extreme>;
+			cooling-device = <&cpu0 5 THERMAL_NO_LIMIT>,
+					 <&cpu1 5 THERMAL_NO_LIMIT>,
+					 <&cpu2 5 THERMAL_NO_LIMIT>,
+					 <&cpu3 5 THERMAL_NO_LIMIT>;
+		};
+	};
 };
 
